@@ -1,0 +1,86 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:4318" # Endpoint per ricevere i dati via HTTP
+      grpc:
+        endpoint: "0.0.0.0:4317" # Endpoint per ricevere i dati via gRPC
+
+# Processor batch si occupa di:
+# 1. Raggruppare piu segnali telemetrici in batch
+# 2. Ottimizzare le performance riducendo il numero di chiamate al backend
+# 3. Gestire meglio la memoria e le risorse
+processors:
+  # Il processor batch raggruppa i dati prima di inviarli
+  batch:
+
+  # Processor attributes: modifica gli attributi dei dati che passano attraverso il collector
+  # Actions definisce le operazioni da eseguire sugli attributi
+  attributes:
+    actions:
+      # Aggiunge un nuovo attributo che indica l'ambiente
+      - key: environment        # Nome dell'attributo
+        value: development      # Valore dell'attributo
+        action: insert         # Tipo di azione: insert (aggiungi)
+
+      # Rimuove dati sensibili
+      - key: password          # Nome dell'attributo da rimuovere
+        action: delete         # Tipo di azione: delete (rimuovi)
+
+      # Offusca l'ID utente per privacy
+      - key: user.id          # Nome dell'attributo da offuscare
+        action: hash          # Tipo di azione: hash (offusca)
+
+  # Processor filter: decide quali dati processare e quali ignorare
+  filter:
+    # Configurazione per il filtraggio delle metriche
+    metrics:
+      # Include solo le metriche che corrispondono a questi pattern
+      include:
+        match_type: regexp    # Usa espressioni regolari per il match
+        metric_names:
+          - ^http\..*         # Tutte le metriche che iniziano con "http."
+          - .*latency$        # Tutte le metriche che finiscono con "latency"
+          - .*error.*         # Tutte le metriche che contengono "error"
+
+      # Esclude specifiche metriche anche se corrispondono ai pattern di include
+      exclude:
+        match_type: strict    # Match esatto del nome
+        metric_names:
+          - http.debug        # Esclude esattamente questa metrica
+          - system.test       # Esclude esattamente questa metrica
+
+  # Processor probabilistic_sampler: campiona una percentuale dei dati
+  probabilistic_sampler:
+    hash_seed: 22            # Seed per garantire consistenza nel sampling
+    sampling_percentage: 15.3 # Percentuale di dati da campionare
+
+# Questa sezione definisce dove verranno inviati i dati
+# - "debug" significa che vedremo informazioni dettagliate
+# - In un ambiente reale, si potrebbero usare altri exporter come: Jaeger, Prometheus
+exporters:
+  debug:
+    verbosity: detailed
+
+# Qui si definiscono le pipeline, flusso dei dati.
+# Ogni pipeline definisce come i dati vengono:
+# 1. Ricevuti (receivers)
+# 2. Processati (processors)
+# 3. Esportati (exporters)
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      # Ordine importante: prima modifica attributi, poi campiona, infine raggruppa in batch
+      processors: [attributes, probabilistic_sampler, batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      # Per le metriche: prima filtra, poi modifica attributi, infine batch
+      processors: [filter, attributes, batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      # Per i log: modifica attributi e raggruppa in batch
+      processors: [attributes, batch]
+      exporters: [debug]
